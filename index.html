@@ -1,0 +1,605 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Bastion Lines</title>
+<style>
+*{box-sizing:border-box}
+body{margin:0;background:#101920;color:#eef7ef;font:16px system-ui,sans-serif}
+main{max-width:1100px;margin:auto;padding:24px}
+header,.hud,.controls{display:flex;justify-content:space-between;align-items:center;gap:12px;flex-wrap:wrap}
+header{margin-bottom:20px}h1{font:700 clamp(2.3rem,6vw,4rem)/1 Georgia;margin:0;color:#f5d994}
+h2,p{margin:0}header p{margin-top:8px;color:#bed3cd}
+button{font:inherit;color:inherit;cursor:pointer;border:1px solid #52746f;background:#20363c;border-radius:8px;padding:8px 12px}
+button:hover,button[aria-pressed=true]{border-color:#f5d994;background:#354842}
+button:focus-visible{outline:3px solid #f5d994;outline-offset:2px}
+button:disabled{opacity:.65;cursor:default}
+.layout{display:grid;grid-template-columns:7fr 5fr;gap:16px}
+.panel{background:#17272e;border:1px solid #36534f;border-radius:14px;padding:12px}
+.hud{margin-bottom:10px;font-weight:700}.blue{color:#8dded4}.red{color:#ffad9a}
+canvas{display:block;width:100%;height:auto;background:#263b3b;border-radius:9px;cursor:crosshair}
+.controls{margin:10px 0}.controls button{flex:1}
+#status{min-height:3em;color:#f2d698}
+.deck{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:8px;margin:10px 0}
+.card{text-align:left;padding:8px;min-height:68px}
+.card strong,.card small{display:block}.card small{color:#c2d6cf;margin-top:4px;font-size:.8rem}
+.card.low-energy{color:#bcc5c4;background:#1b2b30}
+#detail{color:#d4e6de;min-height:4.5em;line-height:1.4}
+.energy{color:#ffe295}
+footer{margin-top:12px;color:#b9ccc6;font-size:.9rem}
+@media(max-width:760px){main{padding:14px}.layout{grid-template-columns:1fr}}
+
+body{background:radial-gradient(ellipse at 50% 0,#233b3e,#10191e 64%);min-height:100vh}
+main{max-width:1200px;padding:28px}
+header{padding:4px 0 14px;border-bottom:1px solid #45625a;margin-bottom:16px}
+header p{font-size:.96rem}
+.panel{background:#18282d;border-color:#47655d;box-shadow:0 8px 24px #0a131975}
+.hud{min-height:30px}
+#clock{background:#101e23;border-radius:6px;padding:4px 10px;color:#ffe0a1;font-variant-numeric:tabular-nums}
+#energy{font-variant-numeric:tabular-nums}
+#energy-meter{display:block;width:100%;height:8px;accent-color:#eec579;margin:2px 0 12px}
+.card{display:grid;grid-template-columns:42px minmax(0,1fr) auto;align-items:center;gap:7px;padding:6px;min-height:62px;background:#203238;text-align:left}
+.card .portrait{width:42px;height:42px;background:#14232a;border-radius:6px;cursor:inherit;image-rendering:pixelated}
+.card strong{font-size:.9rem;line-height:1.15}
+.card small{font-size:.73rem;line-height:1.1}
+.card[aria-pressed=true]{box-shadow:inset 0 0 0 1px #ffe2a0;background:#3b473c}
+.cost{background:#efd193;color:#1c271e;font-size:.78rem;font-weight:800;border-radius:5px;padding:3px 5px}
+.low-energy .cost{background:#556360;color:#fff}
+#detail{min-height:4em;border-top:1px solid #435d55;padding-top:9px;font-size:.9rem}
+#status{min-height:2.5em;font-size:.9rem}
+.controls button{background:#28504d;font-weight:700}
+.controls button:hover{background:#386762}
+footer{line-height:1.5}
+@media(max-width:450px){main{padding:12px}.card{grid-template-columns:32px minmax(0,1fr) auto}.card .portrait{width:32px;height:32px}}
+
+canvas#arena{image-rendering:pixelated;border:2px solid #7c7759;background:#203a30}
+header>div:last-child{display:flex;gap:6px;flex-wrap:wrap}
+#sound[aria-pressed=true]{background:#20363c;border-color:#52746f}
+</style>
+</head>
+<body>
+<main>
+<header><div><h1>Bastion Lines</h1><p>Two lanes. Ten cards. One enemy core.</p></div>
+<div><button id="sound" aria-pressed="true">Sound on</button> <button id="export">Export HTML</button> <button id="reset">New match</button></div></header>
+<div class="layout">
+<section class="panel" aria-label="Battlefield">
+<div class="hud"><span class="red" id="enemy"></span><span id="clock"></span><span class="blue" id="player"></span></div>
+<canvas id="arena" width="680" height="480" aria-label="Two lanes with the enemy bastion at the top and your bastion at the bottom"></canvas>
+<div class="controls"><button id="left">Deploy left</button><button id="right">Deploy right</button></div>
+<p id="status" role="status"></p>
+</section>
+<section class="panel" aria-label="Cards">
+<div class="hud"><h2>Your deck</h2><span class="energy" id="energy"></span></div>
+<progress id="energy-meter" max="10" value="5" aria-label="Available energy"></progress>
+<p>Choose a card, then deploy it in a lane.</p>
+<div id="deck" class="deck"></div>
+<p id="detail"></p>
+</section>
+</div>
+<footer>Destroy the enemy core to win. At 2:30, the side with more core health wins. Lane towers can target air.</footer>
+</main>
+<script>
+"use strict";
+// Capture the clean document so the export includes a fresh, offline-ready game.
+const source = "<!doctype html>\n" + document.documentElement.outerHTML;
+const cards = [
+  {name:"Shieldguard", cost:3, hp:220, damage:24, speed:24, range:18, rate:1, note:"Tough front line", detail:"Absorbs shots for ranged allies. Slow movement gives ranged enemies time to chip it down."},
+  {name:"Longbow", cost:3, hp:80, damage:28, speed:28, range:103, rate:.85, antiAir:true, note:"Long range · anti-air", detail:"Picks off flyers and slow troops at range. Low health makes it vulnerable to dives and spells."},
+  {name:"Twin Runners", cost:2, hp:59, damage:16, speed:58, range:17, rate:.65, count:2, note:"Fast pair", detail:"Two cheap runners punish open lanes. Splash damage can hit both at once."},
+  {name:"Mortar Crew", cost:4, hp:95, damage:42, speed:18, range:91, rate:1.45, splash:42, note:"Ground splash", detail:"Shells clustered ground units. Fires slowly and cannot target flyers."},
+  {name:"Sky Wasp", cost:3, hp:111, damage:23, speed:45, range:22, rate:.8, air:true, note:"Flying attacker", detail:"Flies past ground attackers. Longbows and towers can bring it down."},
+  {name:"Breach Ram", cost:4, hp:188, damage:75, speed:49, range:20, rate:1.15, siege:true, note:"Structures only", detail:"Rushes towers and cores for heavy damage. Ignores enemy troops, even while they attack it."},
+  {name:"Pikewarden", cost:3, hp:130, damage:26, speed:30, range:35, rate:.9, antiAir:true, braced:true, note:"Counters rams", detail:"Deals double damage to Breach Rams and can strike flyers. Has much less reach than a Longbow."},
+  {name:"Field Medic", cost:3, hp:100, speed:30, range:70, rate:.85, heal:33, note:"Heals nearby allies", detail:"Repairs wounded nearby troops, including flyers. Cannot attack or heal structures."},
+  {name:"Arc Mine", cost:2, spell:"mine", note:"Hits advancing groups", detail:"Places a trap near your side. Triggers on nearby ground troops and damages the group. Flyers pass safely."},
+  {name:"Ember Volley", cost:4, spell:"volley", note:"Instant lane-wide strike", detail:"Hits enemy troops across one lane, including flyers, and chips the exposed structure. Costs four energy even on an empty lane."}
+];
+const $ = id => document.getElementById(id);
+const canvas = $("arena");
+const ctx = canvas.getContext("2d");
+const laneX = [190,490];
+const matchLength = 150;
+const colors = ["#8ce0d3","#ff9b85"];
+let state, selected = 0, previousTime = 0;
+// Pixel-art portraits share the same silhouettes as their battlefield units.
+const ink = "#17232c";
+const palettes = [
+  ["#67b2aa","#c2f1d7"], ["#e59172","#ffd1a7"]
+];
+function paintUnit(g, index, side, stride, facingUp) {
+  const [cloth, trim] = palettes[side];
+  const steel = "#8399a5", shine = "#d8e5dd", skin = "#efb589", leather = "#735442";
+  const rect = (color,x,y,w,h) => {g.fillStyle=color;g.fillRect(x,y,w,h);};
+  if (index===4) {
+    const wing = stride ? 1 : 3;
+    rect(ink,1,7-wing,8,7);rect(ink,15,7-wing,8,7);
+    rect("#a8dde7",2,8-wing,7,5);rect("#a8dde7",15,8-wing,7,5);
+    rect(ink,8,5,8,14);rect("#e8ad51",9,7,6,11);
+    rect(cloth,9,12,6,2);rect(ink,10,8,1,2);rect(ink,13,8,1,2);
+    rect(trim,11,18,2,3);
+    return;
+  }
+  if (index===5) {
+    rect(ink,2,7,20,13);rect(leather,4,8,15,9);
+    rect(trim,8,5,6,5);rect(steel,16,9,6,6);rect(shine,20,10,3,2);
+    rect(ink,4+stride,16,5,6);rect(ink,14-stride,16,5,6);
+    rect("#cda271",5+stride,18,3,3);rect("#cda271",15-stride,18,3,3);
+    return;
+  }
+  if (index===8 || index===9) {
+    rect(ink,4,9,16,11);rect(index===8?steel:"#d06032",6,10,12,8);
+    rect(index===8?"#edd38c":"#ffbc50",10,5,4,13);
+    rect(shine,11,3,2,7);
+    return;
+  }
+  rect(ink,6,4,12,17);
+  rect(ink,6,18+stride,5,4);rect(ink,13,19-stride,5,4);
+  rect(leather,7,18+stride,3,3);rect(leather,14,19-stride,3,3);
+  rect(cloth,7,12,10,7);rect(trim,8,12,8,2);rect(leather,8,17,8,2);
+  rect(index===0 || index===6 ? steel : cloth,7,4,10,5);
+  rect(trim,8,4,8,2);
+  rect(facingUp?cloth:skin,8,8,8,4);
+  if (!facingUp) {rect(ink,9,9,1,1);rect(ink,14,9,1,1);}
+  if (index===0) {
+    rect(ink,2,11,7,9);rect(steel,3,12,5,7);rect(trim,5,13,1,5);
+  } else if (index===1) {
+    rect(leather,18,8,2,12);rect(leather,16,8,2,2);rect(leather,16,18,2,2);
+    rect(shine,17,10,1,8);
+  } else if (index===2) {
+    rect("#ecca82",5,10,5,2);rect(shine,17,12,5,2);rect(leather,16,13,2,2);
+  } else if (index===3) {
+    rect(ink,1,12,8,8);rect(steel,2,13,6,6);rect(shine,1,12,5,2);
+    rect(ink,2,14,2,2);
+  } else if (index===6) {
+    rect(leather,19,6,2,15);rect(shine,19,2,2,6);rect(steel,18,6,4,2);
+  } else {
+    rect(shine,14,12,8,7);rect("#af574d",17,13,2,5);rect("#af574d",16,14,4,2);
+  }
+}
+const sprites = cards.map((card,index)=>palettes.map((_,side)=>
+  [0,1].map(stride=>[false,true].map(facingUp=>{
+    const picture = document.createElement("canvas");
+    picture.width = picture.height = 24;
+    paintUnit(picture.getContext("2d"),index,side,stride,facingUp);
+    return picture;
+  }))
+));
+const cardButtons = cards.map((card, index) => {
+  const button = document.createElement("button");
+  button.className = "card";
+  const portrait = document.createElement("canvas");
+  portrait.width = portrait.height = 24;
+  portrait.className = "portrait";
+  portrait.setAttribute("aria-hidden","true");
+  portrait.getContext("2d").drawImage(sprites[index][0][0][0],0,0);
+  const description = document.createElement("span");
+  const title = document.createElement("strong");
+  title.textContent = card.name;
+  const label = document.createElement("small");
+  label.textContent = card.note;
+  description.append(title,label);
+  const cost = document.createElement("span");
+  cost.className = "cost";
+  cost.textContent = card.cost;
+  cost.setAttribute("aria-label",card.cost + " energy");
+  button.append(portrait,description,cost);
+  button.addEventListener("click", () => {
+    wakeAudio();
+    sound("select");
+    selected = index;
+    updateControls();
+  });
+  $("deck").append(button);
+  return button;
+});
+// Short synthesized cues keep the complete soundscape in the offline export.
+const voices = [
+  [160,"square"], [610,"triangle"], [390,"triangle"], [86,"sawtooth"],
+  [720,"sine"], [105,"square"], [280,"triangle"], [510,"sine"],
+  [170,"triangle"], [120,"sawtooth"]
+];
+const cues = {
+  select:[520,680,.045,.022,"sine"], deny:[145,93,.12,.04,"square"],
+  mine:[116,34,.25,.09,"sawtooth"], tower:[260,125,.10,.04,"triangle"],
+  ruin:[140,36,.35,.09,"square"], reset:[310,440,.14,.04,"triangle"],
+  victory:[440,660,.19,.06,"triangle"], defeat:[310,120,.3,.06,"triangle"],
+  draw:[330,330,.23,.06,"triangle"], fall:[125,65,.12,.026,"triangle"]
+};
+let audio, soundEnabled = true;
+const lastCue = new Map();
+function wakeAudio() {
+  if (!soundEnabled) return;
+  const Audio = window.AudioContext || window.webkitAudioContext;
+  if (!Audio) return;
+  audio ??= new Audio();
+  if (audio.state === "suspended") audio.resume().catch(()=>{});
+}
+function tone(from,to,duration,volume,wave,delay=0) {
+  const start = audio.currentTime + delay;
+  const oscillator = audio.createOscillator();
+  const gain = audio.createGain();
+  oscillator.type = wave;
+  oscillator.frequency.setValueAtTime(from,start);
+  oscillator.frequency.exponentialRampToValueAtTime(to,start+duration);
+  gain.gain.setValueAtTime(.001,start);
+  gain.gain.exponentialRampToValueAtTime(volume,start+.012);
+  gain.gain.exponentialRampToValueAtTime(.001,start+duration);
+  oscillator.connect(gain);
+  gain.connect(audio.destination);
+  oscillator.start(start);
+  oscillator.stop(start+duration+.02);
+}
+function sound(event,index) {
+  if (!soundEnabled || audio?.state !== "running") return;
+  const key = event + ":" + (index ?? "");
+  if (audio.currentTime - (lastCue.get(key) ?? -1) < .12) return;
+  lastCue.set(key,audio.currentTime);
+  if (index !== undefined) {
+    const [pitch,wave] = voices[index];
+    const deployment = event === "deploy";
+    const isVolley = index === 9;
+    tone(pitch,pitch*(isVolley?.37:deployment?1.55:.54),
+      isVolley?.29:deployment?.13:.09,isVolley?.11:.044,wave);
+    if (deployment && !isVolley) tone(pitch*1.45,pitch*1.12,.10,.028,wave,.07);
+    return;
+  }
+  tone(...cues[event]);
+  if (event === "victory") tone(660,880,.22,.06,"triangle",.15);
+}
+$("sound").addEventListener("click",()=>{
+  soundEnabled = !soundEnabled;
+  $("sound").textContent = soundEnabled ? "Sound on" : "Sound muted";
+  $("sound").setAttribute("aria-pressed",String(soundEnabled));
+  if (soundEnabled) {wakeAudio();sound("select");}
+  else if (audio?.state === "running") audio.suspend().catch(()=>{});
+});
+
+function structure(side, y, hp, lane) {
+  return {side,y,hp,maxHp:hp,lane,wait:0};
+}
+function newMatch() {
+  state = {
+    elapsed:0, energy:[5,5], units:[], mines:[], effects:[], aiAt:2.8, started:false, ended:false,
+    towers:[0,1].map(side => [0,1].map(lane => structure(side, side ? 103 : 377, 330, lane))),
+    cores:[structure(0,438,510),structure(1,42,510)]
+  };
+  $("status").textContent = "Choose your opening card. The match starts when you deploy.";
+  updateControls();
+}
+function exposed(side, lane) {
+  const tower = state.towers[side][lane];
+  return tower.hp > 0 ? tower : state.cores[side];
+}
+function strike(target, amount) {
+  const wasAlive = target.hp > 0;
+  target.hp = Math.max(0,target.hp - amount);
+  if (wasAlive && !target.hp) sound(target.card ? "fall" : "ruin");
+}
+function deploy(side, lane, index) {
+  const card = cards[index];
+  if (state.ended || state.energy[side] < card.cost) return false;
+  state.energy[side] -= card.cost;
+  sound("deploy",index);
+  state.started = true;
+  if (card.spell === "mine") {
+    state.mines.push({side,lane,y:side ? 155 : 325, life:22});
+  } else if (card.spell === "volley") {
+    for (const unit of state.units) if (unit.side !== side && unit.lane === lane) strike(unit,86);
+    strike(exposed(1-side,lane),32);
+    state.effects.push({lane,y:240,radius:240,life:.26,side});
+  } else {
+    for (let i = 0; i < (card.count || 1); i++) {
+      state.units.push({card,index,side,lane,y:side ? 68-i*17 : 412+i*17,
+        offset:card.count ? (i ? 14 : -14) : 0, hp:card.hp, maxHp:card.hp,wait:0});
+    }
+  }
+  return true;
+}
+function chooseEnemyMove() {
+  const threats = [0,1].map(lane => state.units.filter(unit =>
+    unit.side===0 && unit.lane===lane && unit.hp>0 && unit.y<285));
+  const lane = threats[0].length === threats[1].length ? Math.floor(Math.random()*2) :
+    Number(threats[1].length > threats[0].length);
+  const enemies = threats[lane];
+  const preferred = enemies.some(unit=>unit.card.air) ? [1,6] :
+    enemies.some(unit=>unit.card.siege) ? [6,0] : enemies.length >= 3 ? [3,9] : [0,1,2,4,5];
+  const affordable = preferred.filter(index => cards[index].cost<=state.energy[1]);
+  if (affordable.length) deploy(1,lane,affordable[Math.floor(Math.random()*affordable.length)]);
+}
+function nearest(candidates, y) {
+  return candidates.reduce((best, item) =>
+    !best || Math.abs(y-item.y)<Math.abs(y-best.y) ? item : best, null);
+}
+function moveUnit(unit, dt) {
+  const {card,side,lane} = unit;
+  const base = exposed(1-side,lane);
+  const foes = state.units.filter(other => other.hp>0 && other.side!==side && other.lane===lane);
+  let target = null;
+  if (card.heal) {
+    target = nearest(state.units.filter(other => other!==unit && other.hp>0 &&
+      other.side===side && other.lane===lane && other.hp<other.maxHp &&
+      Math.abs(other.y-unit.y)<=card.range),unit.y);
+  } else if (!card.siege) {
+    target = nearest(foes.filter(other => (!other.card.air || card.antiAir) &&
+      Math.abs(other.y-unit.y)<=card.range),unit.y);
+  }
+  if (!target && Math.abs(base.y-unit.y)<=card.range) {
+    if (card.heal) return;
+    target = base;
+  }
+  if (!target) {
+    unit.y += Math.sign(base.y-unit.y)*card.speed*dt;
+    return;
+  }
+  if (unit.wait>0) return;
+  unit.wait = card.rate;
+  sound("action",unit.index);
+  if (card.heal) {
+    target.hp = Math.min(target.maxHp,target.hp+card.heal);
+  } else {
+    strike(target, card.damage*(card.braced && target.card?.siege ? 2 : 1));
+    if (card.splash) {
+      for (const foe of foes) {
+        if (foe!==target && !foe.card.air && Math.abs(foe.y-target.y)<=card.splash) strike(foe,card.damage);
+      }
+    }
+  }
+  state.effects.push({lane,y:target.y,radius:card.splash || 13,life:.18,side});
+}
+function fireTower(tower, dt, isCore) {
+  if (tower.hp<=0) return;
+  tower.wait -= dt;
+  if (tower.wait>0) return;
+  const target = nearest(state.units.filter(unit => unit.hp>0 && unit.side!==tower.side &&
+    (isCore ? state.towers[tower.side][unit.lane].hp<=0 : unit.lane===tower.lane) &&
+    Math.abs(unit.y-tower.y)<(isCore ? 64 : 83)),tower.y);
+  if (!target) return;
+  tower.wait = .82;
+  sound("tower");
+  strike(target,isCore ? 22 : 20);
+  state.effects.push({lane:target.lane,y:target.y,radius:12,life:.14,side:tower.side});
+}
+function step(dt) {
+  if (!state.started || state.ended) return;
+  state.elapsed = Math.min(matchLength,state.elapsed+dt);
+  const regen = state.elapsed >= 110 ? 1.7 : 1.05;
+  state.energy = state.energy.map(value=>Math.min(10,value+dt*regen));
+  if (state.elapsed>=state.aiAt) {
+    chooseEnemyMove();
+    state.aiAt = state.elapsed+2.4+Math.random()*1.1;
+  }
+  for (const mine of state.mines) {
+    mine.life -= dt;
+    const foes = state.units.filter(unit => unit.hp>0 && unit.side!==mine.side &&
+      unit.lane===mine.lane && !unit.card.air);
+    if (!foes.some(unit=>Math.abs(unit.y-mine.y)<=22)) continue;
+    for (const unit of foes) if (Math.abs(unit.y-mine.y)<=52) strike(unit,112);
+    mine.life = 0;
+    sound("mine");
+    state.effects.push({lane:mine.lane,y:mine.y,radius:54,life:.35,side:mine.side});
+  }
+  state.mines = state.mines.filter(mine=>mine.life>0);
+  for (const unit of state.units) {
+    if (unit.hp<=0) continue;
+    unit.wait -= dt;
+    moveUnit(unit,dt);
+  }
+  for (const tower of state.towers.flat()) fireTower(tower,dt,false);
+  for (const core of state.cores) fireTower(core,dt,true);
+  state.units = state.units.filter(unit=>unit.hp>0);
+  state.effects = state.effects.filter(effect=>(effect.life-=dt)>0);
+  if (state.elapsed>=matchLength || state.cores.some(core=>core.hp<=0)) {
+    state.ended = true;
+    const [you, enemy] = state.cores.map(core=>core.hp);
+    sound(you===enemy ? "draw" : you>enemy ? "victory" : "defeat");
+    $("status").textContent = you===enemy ? "Draw. Both cores finished with equal health." :
+      you>enemy ? "Victory! Your bastion wins." : "Defeat. The enemy bastion wins.";
+  }
+}
+function updateControls() {
+  $("enemy").textContent = "Enemy core " + state.cores[1].hp;
+  $("player").textContent = "Your core " + state.cores[0].hp;
+  const seconds = Math.ceil(matchLength-state.elapsed);
+  $("clock").textContent = Math.floor(seconds/60)+":"+String(seconds%60).padStart(2,"0");
+  $("energy").textContent = "Energy " + state.energy[0].toFixed(1) + " / 10";
+  $("energy-meter").value = state.energy[0];
+  cardButtons.forEach((button,index)=>{
+    button.setAttribute("aria-pressed",String(index===selected));
+    button.classList.toggle("low-energy",state.energy[0]<cards[index].cost);
+  });
+  const card = cards[selected];
+  $("detail").textContent = card.name + " · " + card.detail;
+  $("left").disabled = $("right").disabled = state.ended;
+}
+function meter(x,y,width,item) {
+  ctx.fillStyle="#152327";
+  ctx.fillRect(x-width/2,y,width,5);
+  ctx.fillStyle=colors[item.side];
+  ctx.fillRect(x-width/2,y,width*item.hp/item.maxHp,5);
+}
+function label(text,x,y,color="#e8f6ed",font="bold 14px system-ui") {
+  ctx.fillStyle=color;
+  ctx.font=font;
+  ctx.textAlign="center";
+  ctx.textBaseline="middle";
+  ctx.fillText(text,x,y);
+}
+// Static terrain is painted once in four-pixel blocks.
+function makeTerrain() {
+  const tile = document.createElement("canvas");
+  tile.width = 170;
+  tile.height = 120;
+  const g = tile.getContext("2d");
+  const rect = (color,x,y,w,h) => {g.fillStyle=color;g.fillRect(x,y,w,h);};
+  let seed = 623;
+  const roll = max => {
+    seed = (Math.imul(1664525,seed)+1013904223)>>>0;
+    return seed%max;
+  };
+  rect("#273c2a",0,0,170,120);
+  rect("#344e2e",0,63,170,57);
+  const grass = ["#3d5030","#445535","#34472c","#2d432a","#4c5c34"];
+  for (let y=0;y<120;y+=4) for (let x=0;x<170;x+=4) {
+    rect(grass[roll(grass.length)],x+roll(3),y+roll(3),2+roll(3),1+roll(2));
+  }
+  for (const center of [47,122]) {
+    rect("#343928",center-16,0,33,120);
+    rect("#766248",center-14,0,29,120);
+    rect("#947b52",center-11,0,23,120);
+    for(let y=0;y<120;y+=4) {
+      rect("#ab9060",center-10+roll(18),y,2+roll(4),1);
+      rect("#6b5844",center-13+roll(24),y+2,2,1);
+    }
+  }
+  function pine(x,y) {
+    rect("#263725",x-5,y+3,12,4);
+    rect("#816047",x-1,y+2,3,5);
+    rect("#19392c",x-5,y-1,11,6);
+    rect("#28513a",x-4,y-4,9,6);
+    rect("#346343",x-3,y-7,7,6);
+    rect("#507d4c",x-1,y-8,3,8);
+    rect("#6a8c57",x-1,y-6,2,3);
+  }
+  function rock(x,y) {
+    rect("#222e29",x-4,y,9,4);
+    rect("#596963",x-3,y-1,7,4);
+    rect("#83917c",x-2,y-2,4,2);
+  }
+  for(const [start,width] of [[3,25],[68,33],[143,24]]) {
+    for(let y=12;y<114;y+=12) {
+      if (y>=51 && y<=69) continue;
+      for(let i=0;i<2;i++){
+        const x=start+4+roll(width-8);
+        if (roll(4)) pine(x,y+roll(6)); else rock(x,y);
+      }
+      const x=start+roll(width);
+      rect("#a8a851",x,y+4,2,1);
+      rect("#d7aa72",x+2,y+5,1,1);
+    }
+  }
+  for(const y of [17,94]) {
+    for(const x of [20,75,146]) {
+      rect("#232e2a",x-5,y-3,14,10);
+      rect("#bd9a66",x-3,y+1,10,5);
+      rect("#78513d",x-5,y-4,14,4);
+      rect("#a16a48",x-4,y-5,11,2);
+      rect("#493934",x+1,y+2,2,4);
+      rect("#f0ce81",x-2,y+2,2,2);
+    }
+  }
+  rect("#213c38",0,54,170,12);
+  rect("#326d70",0,56,170,8);
+  for(let x=0;x<170;x+=6) {
+    rect("#76a8a0",x,58+roll(5),2+roll(4),1);
+    rect("#4d8584",x+1,56+roll(3),3,1);
+  }
+  for(const x of [47,122]) {
+    rect("#4b4032",x-13,54,27,12);
+    rect("#aa7d4e",x-11,55,23,10);
+    for(let y=56;y<65;y+=2) rect("#d4a96b",x-10,y,21,1);
+    rect("#634938",x-12,54,2,12);rect("#634938",x+11,54,2,12);
+  }
+  return tile;
+}
+const terrain = makeTerrain();
+function draw() {
+  ctx.imageSmoothingEnabled = false;
+  ctx.drawImage(terrain,0,0,680,480);
+  // Shift water highlights while keeping every mark on the terrain's pixel grid.
+  ctx.fillStyle="#a6d6bd67";
+  for(let x=12;x<676;x+=40) {
+    const wave = (x+Math.floor(state.elapsed*6)*4)%680;
+    if (!laneX.some(lane=>Math.abs(lane-wave)<58)) ctx.fillRect(wave,236+(x%3)*4,8,4);
+  }
+  label("LEFT",68,240);
+  label("RIGHT",608,240);
+  for (const core of state.cores) {
+    ctx.fillStyle="#201f25";
+    ctx.fillRect(119,core.y-17,442,37);
+    ctx.fillStyle=core.hp ? "#67756b" : "#494b43";
+    ctx.fillRect(124,core.y-13,432,26);
+    ctx.fillStyle="#323c39";
+    for(let x=124;x<550;x+=20) ctx.fillRect(x,core.y+5,2,8);
+    ctx.fillStyle=core.hp ? colors[core.side] : "#a7a390";
+    for(let x=124;x<548;x+=20) ctx.fillRect(x,core.y-16,12,5);
+    ctx.fillStyle="#263634";
+    ctx.fillRect(254,core.y-10,172,20);
+    label(core.side ? "ENEMY BASTION" : "YOUR BASTION",340,core.y,colors[core.side]);
+    meter(340,core.y+16,145,core);
+  }
+  for (const tower of state.towers.flat()) {
+    const x = laneX[tower.lane];
+    ctx.fillStyle=tower.hp ? colors[tower.side] : "#394545";
+    ctx.fillRect(x-23,tower.y-15,46,30);
+    if (tower.hp) {
+      ctx.fillStyle="#294048";
+      ctx.fillRect(x-17,tower.y-9,34,18);
+      ctx.fillStyle=colors[tower.side];
+      for (const offset of [-23,-7,9]) ctx.fillRect(x+offset,tower.y-21,14,8);
+      ctx.fillStyle="#0e252d";
+      ctx.fillRect(x-4,tower.y-2,8,13);
+    } else label("RUIN",x,tower.y,"#cad1cf","bold 11px system-ui");
+    meter(x,tower.y+18,49,tower);
+  }
+  ctx.imageSmoothingEnabled = false;
+  for (const mine of state.mines) {
+    ctx.drawImage(sprites[8][mine.side][0][0],laneX[mine.lane]-17,mine.y-17,34,34);
+  }
+  for (const effect of state.effects) {
+    ctx.save();
+    ctx.globalAlpha=.4;
+    ctx.strokeStyle=colors[effect.side];
+    ctx.lineWidth=3;
+    ctx.strokeRect(laneX[effect.lane]-22,effect.y-effect.radius,44,effect.radius*2);
+    ctx.restore();
+  }
+  for (const unit of state.units) {
+    const x = laneX[unit.lane]+unit.offset+(unit.side ? -12 : 12);
+    const stride = Math.floor(state.elapsed*9+unit.y*.07)%2;
+    const hover = unit.card.air ? Math.sin(state.elapsed*12)*3 : 0;
+    ctx.fillStyle="#08151b66";
+    ctx.fillRect(Math.round(x)-11,Math.round(unit.y)+10,22,5);
+    const sprite = sprites[unit.index][unit.side][stride][Number(unit.side===0)];
+    ctx.drawImage(sprite,Math.round(x)-24,Math.round(unit.y+hover)-27,48,48);
+    meter(x,unit.y+17,27,unit);
+  }
+}
+function play(lane) {
+  if (state.ended) return;
+  wakeAudio();
+  const card = cards[selected];
+  const success = deploy(0,lane,selected);
+  if (!success) sound("deny");
+  $("status").textContent = success ?
+    card.name + " deployed in the " + (lane ? "right" : "left") + " lane." :
+    "Need " + card.cost + " energy for " + card.name + ".";
+  updateControls();
+}
+function frame(now) {
+  if (previousTime) step(Math.min(.05,(now-previousTime)/1000));
+  previousTime = now;
+  draw();
+  updateControls();
+  requestAnimationFrame(frame);
+}
+$("left").addEventListener("click",()=>play(0));
+$("right").addEventListener("click",()=>play(1));
+canvas.addEventListener("click",event=>{
+  const bounds=canvas.getBoundingClientRect();
+  play(Number(event.clientX-bounds.left>bounds.width/2));
+});
+$("reset").addEventListener("click",()=>{wakeAudio();sound("reset");newMatch();});
+$("export").addEventListener("click",()=>{
+  const url = URL.createObjectURL(new Blob([source],{type:"text/html;charset=utf-8"}));
+  const link = document.createElement("a");
+  link.href = url;
+  link.download = "index.html";
+  link.click();
+  setTimeout(()=>URL.revokeObjectURL(url),1000);
+});
+newMatch();
+requestAnimationFrame(frame);
+</script>
+</body>
+</html>
